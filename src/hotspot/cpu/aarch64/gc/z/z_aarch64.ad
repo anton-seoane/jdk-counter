@@ -96,11 +96,18 @@ static void z_load_barrier(MacroAssembler* masm, const MachNode* node, Address r
   __ bind(*stub->continuation());
 }
 
-static void z_store_barrier(MacroAssembler* masm, const MachNode* node, Address ref_addr, Register rnew_zaddress, Register rnew_zpointer, Register tmp, bool is_atomic) {
+static void z_store_barrier(MacroAssembler* masm, const MachNode* node, Address ref_addr, Register rnew_zaddress, Register rnew_zpointer, Register tmp, bool is_atomic, bool vol) {
   Assembler::InlineSkippedInstructionsCounter skipped_counter(masm);
   if (node->barrier_data() == ZBarrierElided) {
     z_color(masm, node, rnew_zpointer, rnew_zaddress);
   } else {
+    if (!is_atomic) {
+      if (vol) {
+        __ increment(Address(rthread, JavaThread::offset_store_volatile()));
+      } else {
+        __ increment(Address(rthread, JavaThread::offset_store_nonvolatile()));
+      }
+    }
     bool is_native = (node->barrier_data() & ZBarrierNative) != 0;
     bool is_nokeepalive = (node->barrier_data() & ZBarrierNoKeepalive) != 0;
     ZStoreBarrierStubC2Aarch64* const stub = ZStoreBarrierStubC2Aarch64::create(node, ref_addr, rnew_zaddress, rnew_zpointer, is_native, is_atomic, is_nokeepalive);
@@ -171,7 +178,7 @@ instruct zStoreP(memory mem, iRegP src, iRegPNoSp tmp, rFlagsReg cr)
   ins_encode %{
     const Address ref_addr = mem2address($mem->opcode(), as_Register($mem$$base), $mem$$index, $mem$$scale, $mem$$disp);
     __ increment(Address(rthread, JavaThread::offset_store()));
-    z_store_barrier(masm, this, ref_addr, $src$$Register, $tmp$$Register, rscratch2, false /* is_atomic */);
+    z_store_barrier(masm, this, ref_addr, $src$$Register, $tmp$$Register, rscratch2, false /* is_atomic */, false);
     __ str($tmp$$Register, ref_addr);
   %}
   ins_pipe(pipe_serial);
@@ -189,7 +196,7 @@ instruct zStorePVolatile(indirect mem, iRegP src, iRegPNoSp tmp, rFlagsReg cr)
   ins_encode %{
     const Address ref_addr = Address($mem$$Register);
     __ increment(Address(rthread, JavaThread::offset_store()));
-    z_store_barrier(masm, this, ref_addr, $src$$Register, $tmp$$Register, rscratch2, false /* is_atomic */);
+    z_store_barrier(masm, this, ref_addr, $src$$Register, $tmp$$Register, rscratch2, false /* is_atomic */, true);
     __ stlr($tmp$$Register, $mem$$Register);
   %}
   ins_pipe(pipe_serial);
@@ -210,7 +217,7 @@ instruct zCompareAndSwapP(iRegINoSp res, indirect mem, iRegP oldval, iRegP newva
     guarantee($mem$$index == -1 && $mem$$disp == 0, "impossible encoding");
     Address ref_addr($mem$$Register);
     __ increment(Address(rthread, JavaThread::offset_atomic()));
-    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */);
+    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */, false);
     z_color(masm, this, $oldval_tmp$$Register, $oldval$$Register);
     __ cmpxchg($mem$$Register, $oldval_tmp$$Register, $newval_tmp$$Register, Assembler::xword,
                false /* acquire */, true /* release */, false /* weak */, noreg);
@@ -235,7 +242,7 @@ instruct zCompareAndSwapPAcq(iRegINoSp res, indirect mem, iRegP oldval, iRegP ne
     guarantee($mem$$index == -1 && $mem$$disp == 0, "impossible encoding");
     Address ref_addr($mem$$Register);
     __ increment(Address(rthread, JavaThread::offset_atomic()));
-    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */);
+    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */, false);
     z_color(masm, this, $oldval_tmp$$Register, $oldval$$Register);
     __ cmpxchg($mem$$Register, $oldval_tmp$$Register, $newval_tmp$$Register, Assembler::xword,
                true /* acquire */, true /* release */, false /* weak */, noreg);
@@ -260,7 +267,7 @@ instruct zCompareAndExchangeP(iRegPNoSp res, indirect mem, iRegP oldval, iRegP n
     guarantee($mem$$index == -1 && $mem$$disp == 0, "impossible encoding");
     Address ref_addr($mem$$Register);
     __ increment(Address(rthread, JavaThread::offset_atomic()));
-    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */);
+    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */, false);
     z_color(masm, this, $oldval_tmp$$Register, $oldval$$Register);
     __ cmpxchg($mem$$Register, $oldval_tmp$$Register, $newval_tmp$$Register, Assembler::xword,
                false /* acquire */, true /* release */, false /* weak */, $res$$Register);
@@ -284,7 +291,7 @@ instruct zCompareAndExchangePAcq(iRegPNoSp res, indirect mem, iRegP oldval, iReg
     guarantee($mem$$index == -1 && $mem$$disp == 0, "impossible encoding");
     Address ref_addr($mem$$Register);
     __ increment(Address(rthread, JavaThread::offset_atomic()));
-    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */);
+    z_store_barrier(masm, this, ref_addr, $newval$$Register, $newval_tmp$$Register, rscratch2, true /* is_atomic */, false);
     z_color(masm, this, $oldval_tmp$$Register, $oldval$$Register);
     __ cmpxchg($mem$$Register, $oldval_tmp$$Register, $newval_tmp$$Register, Assembler::xword,
                true /* acquire */, true /* release */, false /* weak */, $res$$Register);
@@ -305,7 +312,7 @@ instruct zGetAndSetP(indirect mem, iRegP newv, iRegPNoSp prev, rFlagsReg cr) %{
 
   ins_encode %{
     __ increment(Address(rthread, JavaThread::offset_atomic()));
-    z_store_barrier(masm, this, Address($mem$$Register), $newv$$Register, $prev$$Register, rscratch2, true /* is_atomic */);
+    z_store_barrier(masm, this, Address($mem$$Register), $newv$$Register, $prev$$Register, rscratch2, true /* is_atomic */, false);
     __ atomic_xchg($prev$$Register, $prev$$Register, $mem$$Register);
     z_uncolor(masm, this, $prev$$Register);
   %}
@@ -324,7 +331,7 @@ instruct zGetAndSetPAcq(indirect mem, iRegP newv, iRegPNoSp prev, rFlagsReg cr) 
 
   ins_encode %{
     __ increment(Address(rthread, JavaThread::offset_atomic()));
-    z_store_barrier(masm, this, Address($mem$$Register), $newv$$Register, $prev$$Register, rscratch2, true /* is_atomic */);
+    z_store_barrier(masm, this, Address($mem$$Register), $newv$$Register, $prev$$Register, rscratch2, true /* is_atomic */, false);
     __ atomic_xchgal($prev$$Register, $prev$$Register, $mem$$Register);
     z_uncolor(masm, this, $prev$$Register);
   %}

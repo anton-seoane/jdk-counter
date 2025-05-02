@@ -254,6 +254,8 @@ class JavaThread: public Thread {
  public:                                                        // Expose _thread_state for SafeFetchInt()
   volatile JavaThreadState _thread_state;
   unsigned long long _counter_store;
+  unsigned long long _counter_store_volatile;
+  unsigned long long _counter_store_nonvolatile;
   unsigned long long _counter_atomic;
   unsigned long long _counter_load;
   unsigned long long _counter_load_weak;
@@ -827,6 +829,8 @@ private:
   }
 
   static ByteSize offset_store() { return byte_offset_of(JavaThread, _counter_store); }
+  static ByteSize offset_store_volatile() { return byte_offset_of(JavaThread, _counter_store_volatile); }
+  static ByteSize offset_store_nonvolatile() { return byte_offset_of(JavaThread, _counter_store_nonvolatile); }
   static ByteSize offset_atomic() { return byte_offset_of(JavaThread, _counter_atomic); } 
   static ByteSize offset_load() { return byte_offset_of(JavaThread, _counter_load); }
   static ByteSize offset_load_weak() { return byte_offset_of(JavaThread, _counter_load_weak); }

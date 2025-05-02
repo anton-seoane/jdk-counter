@@ -104,8 +104,10 @@ void ZBarrierSet::on_thread_detach(Thread* thread) {
   // Update the funny counters like in the destructor.
   if (thread->is_Java_thread()) {
     JavaThread* const jt = JavaThread::cast(thread);
-    tty->print_cr("%lld,%lld,%lld,%lld,%lld,%lld,%lld",
+    tty->print_cr("%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld,%lld",
                   jt->_counter_store,
+                  jt->_counter_store_volatile,
+                  jt->_counter_store_nonvolatile,
                   jt->_counter_atomic,
                   jt->_counter_load,
                   jt->_counter_load_weak,
